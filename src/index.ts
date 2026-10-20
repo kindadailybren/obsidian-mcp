@@ -51,7 +51,8 @@ async function main() {
     const app = createHttpServer(config, deps);
     const server = app.listen(config.port, config.host, () => {
       console.log(`🚀 Server listening on http://${config.host}:${config.port}`);
-      console.log(`📡 MCP SSE Endpoint:     http://localhost:${config.port}/sse`);
+      console.log(`🌐 MCP Streamable HTTP:  http://localhost:${config.port}/mcp`);
+      console.log(`📡 Legacy MCP SSE:       http://localhost:${config.port}/sse`);
       console.log(`💬 MCP Message Endpoint: http://localhost:${config.port}/messages`);
       console.log(`🩺 Health check:         http://localhost:${config.port}/health`);
       console.log('========================================================\n');

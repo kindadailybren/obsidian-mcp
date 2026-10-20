@@ -126,4 +126,86 @@ describe('HTTP & Authentication Transport', () => {
     expect(data.title).toBe('Hello');
     expect(data.content).toContain('Welcome to Obsidian MCP');
   });
+
+  it('rejects /mcp requests without authorization', async () => {
+    const res = await fetch(`${baseUrl}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'test', version: '1.0' },
+        },
+      }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('handles modern Streamable HTTP /mcp initialize and tools/list', async () => {
+    const initRes = await fetch(`${baseUrl}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${testAuthToken}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0.0' },
+        },
+      }),
+    });
+
+    expect(initRes.status).toBe(200);
+    const sessionId = initRes.headers.get('mcp-session-id');
+    expect(sessionId).toBeTruthy();
+
+    const toolsRes = await fetch(`${baseUrl}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${testAuthToken}`,
+        'mcp-session-id': sessionId!,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      }),
+    });
+
+    expect(toolsRes.status).toBe(200);
+    const text = await toolsRes.text();
+    expect(text).toContain('search_notes');
+    expect(text).toContain('read_note');
+  });
+
+  it('supports stateless one-shot calls to /mcp', async () => {
+    const res = await fetch(`${baseUrl}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${testAuthToken}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 99,
+        method: 'tools/list',
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('search_notes');
+  });
 });

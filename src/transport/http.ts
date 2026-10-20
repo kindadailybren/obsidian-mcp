@@ -2,13 +2,17 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { Config } from '../config.js';
 import { createObsidianMcpServer, ServerDependencies } from '../server.js';
 
 export function createHttpServer(config: Config, deps: ServerDependencies) {
   const app = express();
-  const transports = new Map<string, SSEServerTransport>();
+  const sseTransports = new Map<string, SSEServerTransport>();
+  const streamableTransports = new Map<string, StreamableHTTPServerTransport>();
 
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
@@ -70,6 +74,12 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
       vaultPath: deps.fileManager.getVaultPath(),
       hasNotes: notes.length > 0,
       authEnabled: Boolean(config.authToken),
+      endpoints: {
+        mcp: '/mcp',
+        sse: '/sse',
+        messages: '/messages',
+        webUi: '/',
+      },
     });
   });
 
@@ -145,26 +155,113 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
     }
   });
 
-  // MCP SSE endpoint
+  // ===========================================================================
+  // Modern MCP Streamable HTTP Transport (Single endpoint: /mcp)
+  // Handles POST, GET, and DELETE requests according to the latest MCP spec.
+  // ===========================================================================
+  app.all('/mcp', async (req: Request, res: Response) => {
+    // Streamable HTTP specification requires clients accept application/json and text/event-stream.
+    // We normalize incoming Accept headers to ensure maximum client interoperability.
+    const currentAccept = req.headers.accept || '';
+    let normalizedAccept = currentAccept;
+    if (!normalizedAccept.includes('application/json')) {
+      normalizedAccept += (normalizedAccept ? ', ' : '') + 'application/json';
+    }
+    if (!normalizedAccept.includes('text/event-stream')) {
+      normalizedAccept += (normalizedAccept ? ', ' : '') + 'text/event-stream';
+    }
+    req.headers.accept = normalizedAccept;
+
+    const rawSessionId = req.headers['mcp-session-id'];
+    const sessionId = typeof rawSessionId === 'string' ? rawSessionId : undefined;
+
+    let transport: StreamableHTTPServerTransport | undefined;
+
+    if (sessionId && streamableTransports.has(sessionId)) {
+      // Existing active stateful session
+      transport = streamableTransports.get(sessionId)!;
+    } else if (!sessionId && req.method === 'POST' && isInitializeRequest(req.body)) {
+      // Initialize a new stateful session
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (newSid) => {
+          streamableTransports.set(newSid, transport!);
+        },
+      });
+
+      transport.onclose = () => {
+        const sid = transport?.sessionId;
+        if (sid) {
+          streamableTransports.delete(sid);
+        }
+      };
+
+      const mcpServer = createObsidianMcpServer(deps);
+      await mcpServer.connect(transport);
+    } else if (sessionId) {
+      // Session ID was passed but does not exist or expired
+      res.status(404).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Session not found or expired' },
+        id: null,
+      });
+      return;
+    } else if (req.method === 'POST') {
+      // Stateless fallback: Client sent an MCP call without prior initialize session
+      const statelessTransport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+      });
+      const mcpServer = createObsidianMcpServer(deps);
+      await mcpServer.connect(statelessTransport);
+      await statelessTransport.handleRequest(req, res, req.body);
+      res.on('close', () => {
+        statelessTransport.close().catch(() => {});
+        mcpServer.close().catch(() => {});
+      });
+      return;
+    } else {
+      res.status(405).json({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Method Not Allowed' },
+        id: null,
+      });
+      return;
+    }
+
+    try {
+      await transport.handleRequest(req, res, req.body);
+    } catch (err: any) {
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: err.message || 'Internal server error' },
+          id: null,
+        });
+      }
+    }
+  });
+
+  // ===========================================================================
+  // Legacy HTTP+SSE Transport (Backwards compatibility for /sse & /messages)
+  // ===========================================================================
   app.get('/sse', async (req: Request, res: Response) => {
     const transport = new SSEServerTransport('/messages', res);
     const sessionId = transport.sessionId;
-    transports.set(sessionId, transport);
+    sseTransports.set(sessionId, transport);
 
     const mcpServer = createObsidianMcpServer(deps);
 
     transport.onclose = () => {
-      transports.delete(sessionId);
+      sseTransports.delete(sessionId);
     };
 
     req.on('close', () => {
-      transports.delete(sessionId);
+      sseTransports.delete(sessionId);
     });
 
     await mcpServer.connect(transport);
   });
 
-  // MCP Message endpoint
   app.post('/messages', async (req: Request, res: Response) => {
     const sessionId = req.query.sessionId as string;
     if (!sessionId) {
@@ -172,7 +269,7 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
       return;
     }
 
-    const transport = transports.get(sessionId);
+    const transport = sseTransports.get(sessionId);
     if (!transport) {
       res.status(404).send(`Session not found: ${sessionId}`);
       return;
