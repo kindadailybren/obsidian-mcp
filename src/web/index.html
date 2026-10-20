@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Obsidian Vault Reader</title>
+  <!-- Marked for Markdown, Highlight.js for code, KaTeX for math -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+  <style>
+    :root {
+      --bg-primary: #1e1e24;
+      --bg-sidebar: #16161a;
+      --bg-hover: #26262e;
+      --bg-active: #31313c;
+      --accent: #8b5cf6;
+      --accent-hover: #7c3aed;
+      --text-main: #e2e8f0;
+      --text-muted: #94a3b8;
+      --border: #2d3748;
+      --card-bg: #1a1a21;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Sidebar */
+    #sidebar {
+      width: 320px;
+      min-width: 280px;
+      background-color: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .sidebar-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .sidebar-title {
+      font-weight: 700;
+      font-size: 1.05rem;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .search-box {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: #23232c;
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      font-size: 0.9rem;
+      outline: none;
+    }
+    .search-input:focus { border-color: var(--accent); }
+
+    .note-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .folder-group {
+      margin-bottom: 12px;
+    }
+
+    .folder-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      padding: 6px 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .note-item {
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.88rem;
+      color: var(--text-main);
+      transition: background 0.15s ease;
+      margin-bottom: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .note-item:hover { background: var(--bg-hover); }
+    .note-item.active { background: var(--bg-active); color: #fff; font-weight: 600; border-left: 3px solid var(--accent); }
+
+    .sidebar-footer {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .btn-token {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.75rem;
+    }
+    .btn-token:hover { background: var(--bg-hover); color: #fff; }
+
+    /* Main Content */
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .top-bar {
+      padding: 12px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-primary);
+    }
+
+    .note-header-info h1 {
+      font-size: 1.4rem;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+
+    .note-meta {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .tag-badge {
+      background: #2e2646;
+      color: #c4b5fd;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    .content-container {
+      flex: 1;
+      padding: 32px 48px;
+      overflow-y: auto;
+      max-width: 900px;
+      margin: 0 auto;
+      width: 100%;
+      line-height: 1.7;
+    }
+
+    /* Markdown Styling */
+    .content-container h1, .content-container h2, .content-container h3 {
+      color: #fff;
+      margin-top: 24px;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+    .content-container h1 { font-size: 1.8rem; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .content-container h2 { font-size: 1.35rem; }
+    .content-container h3 { font-size: 1.15rem; }
+    .content-container p { margin-bottom: 14px; }
+    .content-container ul, .content-container ol { margin-left: 24px; margin-bottom: 16px; }
+    .content-container li { margin-bottom: 6px; }
+    .content-container pre {
+      background: #121217;
+      padding: 14px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin-bottom: 16px;
+      border: 1px solid var(--border);
+    }
+    .content-container code {
+      background: #262633;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      color: #f1f5f9;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .content-container pre code { background: transparent; padding: 0; }
+    .content-container table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+      font-size: 0.9rem;
+    }
+    .content-container th, .content-container td {
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      text-align: left;
+    }
+    .content-container th { background: #23232f; color: #fff; }
+    .content-container blockquote {
+      border-left: 4px solid var(--accent);
+      padding: 6px 16px;
+      margin-bottom: 16px;
+      background: #232033;
+      color: #cbd5e1;
+      border-radius: 0 4px 4px 0;
+    }
+    .content-container hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 24px 0;
+    }
+
+    /* Wiki links */
+    .wiki-link {
+      color: #a78bfa;
+      text-decoration: none;
+      cursor: pointer;
+      font-weight: 500;
+      border-bottom: 1px dashed #a78bfa;
+    }
+    .wiki-link:hover {
+      color: #c4b5fd;
+      border-bottom-style: solid;
+    }
+
+    /* Auth Modal */
+    #authModal {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-box {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      padding: 32px;
+      border-radius: 12px;
+      width: 440px;
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);
+    }
+    .modal-box h2 {
+      font-size: 1.3rem;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+    .modal-box p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+    }
+    .modal-box input {
+      width: 100%;
+      padding: 10px 14px;
+      background: #121217;
+      border: 1px solid var(--border);
+      color: #fff;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      margin-bottom: 16px;
+      outline: none;
+    }
+    .modal-box input:focus { border-color: var(--accent); }
+    .modal-box button {
+      width: 100%;
+      padding: 10px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .modal-box button:hover { background: var(--accent-hover); }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-muted);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">
+        <span>📖</span> Obsidian Vault
+      </div>
+      <button class="btn-token" onclick="showAuthModal()">Token</button>
+    </div>
+    <div class="search-box">
+      <input type="text" id="searchInput" class="search-input" placeholder="Search notes..." autocomplete="off">
+    </div>
+    <div id="noteList" class="note-list">
+      <!-- Notes injected via JS -->
+    </div>
+    <div class="sidebar-footer">
+      <span id="noteCount">0 notes</span>
+      <span>notes.breindel.me</span>
+    </div>
+  </aside>
+
+  <!-- Main View -->
+  <main id="main">
+    <div class="top-bar">
+      <div class="note-header-info">
+        <h1 id="currentNoteTitle">Select a note</h1>
+        <div id="currentNoteMeta" class="note-meta"></div>
+      </div>
+    </div>
+    <div id="content" class="content-container">
+      <div class="empty-state">
+        <p>Select a note from the sidebar or search above.</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Auth Modal -->
+  <div id="authModal" style="display: none;">
+    <div class="modal-box">
+      <h2>🔒 Vault Authentication</h2>
+      <p>Enter your Bearer / API token to view notes. It will be stored securely in your browser's local storage.</p>
+      <input type="password" id="tokenInput" placeholder="Paste your AUTH_TOKEN here...">
+      <button onclick="saveToken()">Connect Vault</button>
+    </div>
+  </div>
+
+  <script>
+    let allNotes = [];
+    let currentNote = null;
+
+    function getToken() {
+      return localStorage.getItem('obsidian_token') || '';
+    }
+
+    function showAuthModal() {
+      document.getElementById('tokenInput').value = getToken();
+      document.getElementById('authModal').style.display = 'flex';
+      document.getElementById('tokenInput').focus();
+    }
+
+    function saveToken() {
+      const val = document.getElementById('tokenInput').value.trim();
+      if (!val) return;
+      localStorage.setItem('obsidian_token', val);
+      document.getElementById('authModal').style.display = 'none';
+      loadNotes();
+    }
+
+    async function apiFetch(endpoint) {
+      const token = getToken();
+      if (!token) {
+        showAuthModal();
+        throw new Error('No token');
+      }
+
+      const res = await fetch(endpoint, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (res.status === 401) {
+        showAuthModal();
+        throw new Error('Unauthorized');
+      }
+
+      return res;
+    }
+
+    async function loadNotes() {
+      try {
+        const res = await apiFetch('/api/notes?limit=100');
+        const data = await res.json();
+        allNotes = data.notes || [];
+        renderNoteList(allNotes);
+        document.getElementById('noteCount').textContent = `${allNotes.length} notes`;
+
+        // Automatically open first note or previously selected
+        if (allNotes.length > 0 && !currentNote) {
+          openNote(allNotes[0].path);
+        }
+      } catch (e) {
+        console.error('Failed to load notes', e);
+      }
+    }
+
+    function renderNoteList(notes) {
+      const container = document.getElementById('noteList');
+      container.innerHTML = '';
+
+      if (notes.length === 0) {
+        container.innerHTML = '<div style="color:var(--text-muted);padding:12px;font-size:0.85rem;">No notes found.</div>';
+        return;
+      }
+
+      // Group by folder
+      const groups = {};
+      notes.forEach(n => {
+        const parts = n.path.split('/');
+        const folder = parts.length > 1 ? parts[parts.length - 2] : 'General';
+        if (!groups[folder]) groups[folder] = [];
+        groups[folder].push(n);
+      });
+
+      Object.keys(groups).sort().forEach(folder => {
+        const groupDiv = document.createElement('div');
+        groupDiv.className = 'folder-group';
+
+        const title = document.createElement('div');
+        title.className = 'folder-title';
+        title.innerHTML = `📁 ${folder}`;
+        groupDiv.appendChild(title);
+
+        groups[folder].forEach(note => {
+          const item = document.createElement('div');
+          item.className = 'note-item';
+          if (currentNote && currentNote.path === note.path) {
+            item.classList.add('active');
+          }
+          item.textContent = note.title;
+          item.onclick = () => openNote(note.path);
+          groupDiv.appendChild(item);
+        });
+
+        container.appendChild(groupDiv);
+      });
+    }
+
+    async function openNote(notePath) {
+      try {
+        const res = await apiFetch(`/api/note?path=${encodeURIComponent(notePath)}`);
+        const note = await res.json();
+        currentNote = note;
+
+        document.getElementById('currentNoteTitle').textContent = note.title;
+        const metaContainer = document.getElementById('currentNoteMeta');
+        metaContainer.innerHTML = '';
+
+        if (note.tags && note.tags.length > 0) {
+          note.tags.forEach(t => {
+            const span = document.createElement('span');
+            span.className = 'tag-badge';
+            span.textContent = `#${t}`;
+            metaContainer.appendChild(span);
+          });
+        }
+
+        const dateSpan = document.createElement('span');
+        dateSpan.textContent = `Updated: ${new Date(note.modifiedAt).toLocaleDateString()}`;
+        metaContainer.appendChild(dateSpan);
+
+        // Convert Obsidian wiki-links [[Target]] into clickable HTML links
+        let markdown = note.content || '';
+        markdown = markdown.replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (match, target, alias) => {
+          const displayText = alias || target;
+          return `<a class="wiki-link" onclick="openNoteByName('${target.trim()}')">${displayText}</a>`;
+        });
+
+        // Parse markdown with marked.js
+        const html = marked.parse(markdown);
+        const contentDiv = document.getElementById('content');
+        contentDiv.innerHTML = html;
+
+        // Render code highlighting
+        contentDiv.querySelectorAll('pre code').forEach((el) => {
+          hljs.highlightElement(el);
+        });
+
+        // Render math equations with KaTeX
+        renderMathInElement(contentDiv, {
+          delimiters: [
+            {left: '$$', right: '$$', display: true},
+            {left: '$', right: '$', display: false}
+          ],
+          throwOnError: false
+        });
+
+        // Update active class in sidebar
+        document.querySelectorAll('.note-item').forEach(el => {
+          el.classList.toggle('active', el.textContent === note.title);
+        });
+
+        contentDiv.scrollTop = 0;
+      } catch (err) {
+        console.error('Error opening note:', err);
+      }
+    }
+
+    function openNoteByName(name) {
+      const match = allNotes.find(n => n.title.toLowerCase() === name.toLowerCase() || n.path.toLowerCase().includes(name.toLowerCase()));
+      if (match) {
+        openNote(match.path);
+      } else {
+        openNote(name);
+      }
+    }
+
+    // Debounced search
+    let searchTimer = null;
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      clearTimeout(searchTimer);
+      const query = e.target.value.trim();
+      searchTimer = setTimeout(async () => {
+        if (!query) {
+          renderNoteList(allNotes);
+          return;
+        }
+        try {
+          const res = await apiFetch(`/api/search?q=${encodeURIComponent(query)}`);
+          const data = await res.json();
+          const matchedPaths = (data.results || []).map(r => r.path);
+          const filtered = allNotes.filter(n => matchedPaths.includes(n.path));
+          renderNoteList(filtered);
+        } catch (e) {
+          console.error(e);
+        }
+      }, 250);
+    });
+
+    // Start on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      if (!getToken()) {
+        showAuthModal();
+      } else {
+        loadNotes();
+      }
+    });
+  </script>
+</body>
+</html>

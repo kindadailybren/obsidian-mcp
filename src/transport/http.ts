@@ -1,5 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import path from 'node:path';
+import fs from 'node:fs';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { Config } from '../config.js';
 import { createObsidianMcpServer, ServerDependencies } from '../server.js';
@@ -11,10 +13,23 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
 
+  // Helper to resolve web dashboard HTML
+  const getWebHtmlPath = (): string => {
+    const candidate1 = path.resolve(process.cwd(), 'dist/web/index.html');
+    const candidate2 = path.resolve(process.cwd(), 'src/web/index.html');
+    if (fs.existsSync(candidate1)) return candidate1;
+    return candidate2;
+  };
+
   // Authentication Middleware
   const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
-    // Skip auth for health check
-    if (req.path === '/health') {
+    // Skip auth for health check and Web UI reader
+    if (
+      req.path === '/health' ||
+      req.path === '/' ||
+      req.path === '/view' ||
+      req.path === '/favicon.ico'
+    ) {
       return next();
     }
 
@@ -56,6 +71,16 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
       hasNotes: notes.length > 0,
       authEnabled: Boolean(config.authToken),
     });
+  });
+
+  // Web Reader UI
+  app.get(['/', '/view'], (_req: Request, res: Response) => {
+    const htmlFile = getWebHtmlPath();
+    if (fs.existsSync(htmlFile)) {
+      res.sendFile(htmlFile);
+    } else {
+      res.send('<h1>Obsidian MCP Server</h1><p>Web UI file not found.</p>');
+    }
   });
 
   // REST API helpers (for direct browser/webhook usage)

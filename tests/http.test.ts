@@ -66,6 +66,13 @@ describe('HTTP & Authentication Transport', () => {
     expect(data.authEnabled).toBe(true);
   });
 
+  it('serves the Web Reader UI at root endpoint', async () => {
+    const res = await fetch(`${baseUrl}/`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Obsidian Vault Reader');
+  });
+
   it('rejects protected endpoints when auth token is missing', async () => {
     const res = await fetch(`${baseUrl}/api/notes`);
     expect(res.status).toBe(401);
