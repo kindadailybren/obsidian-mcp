@@ -8,6 +8,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { Config } from '../config.js';
 import { createObsidianMcpServer, ServerDependencies } from '../server.js';
+import { registerOAuthRoutes } from '../auth/oauth.js';
 
 export function createHttpServer(config: Config, deps: ServerDependencies) {
   const app = express();
@@ -16,6 +17,7 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
 
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // Helper to resolve web dashboard HTML
   const getWebHtmlPath = (): string => {
@@ -25,14 +27,19 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
     return candidate2;
   };
 
+  // Register RFC 8414 / RFC 9728 OAuth 2.1 routes (Claude & Gemini auth)
+  registerOAuthRoutes(app, config);
+
   // Authentication Middleware
   const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
-    // Skip auth for health check and Web UI reader
+    // Skip auth for health check, Web UI reader, and OAuth discovery / authorization endpoints
     if (
       req.path === '/health' ||
       req.path === '/' ||
       req.path === '/view' ||
-      req.path === '/favicon.ico'
+      req.path === '/favicon.ico' ||
+      req.path.startsWith('/.well-known/') ||
+      req.path.startsWith('/oauth/')
     ) {
       return next();
     }
@@ -52,9 +59,16 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
     }
 
     if (!providedToken || providedToken !== config.authToken) {
+      const host = req.get('x-forwarded-host') || req.get('host') || 'notes.breindel.me';
+      const proto = req.get('x-forwarded-proto') || (req.secure ? 'https' : 'http');
+      const baseUrl = host.includes('notes.breindel.me') ? 'https://notes.breindel.me' : `${proto}://${host}`;
+      res.setHeader(
+        'WWW-Authenticate',
+        `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`
+      );
       res.status(401).json({
         error: 'Unauthorized',
-        message: 'Valid Bearer token or x-api-key header is required in request headers.',
+        message: 'Valid Bearer token or OAuth authorization required.',
       });
       return;
     }

@@ -208,4 +208,87 @@ describe('HTTP & Authentication Transport', () => {
     const body = await res.text();
     expect(body).toContain('search_notes');
   });
+
+  it('exposes RFC 8414 and RFC 9728 OAuth discovery metadata', async () => {
+    const metaRes = await fetch(`${baseUrl}/.well-known/oauth-authorization-server`);
+    expect(metaRes.status).toBe(200);
+    const meta = (await metaRes.json()) as any;
+    expect(meta.authorization_endpoint).toContain('/oauth/authorize');
+    expect(meta.token_endpoint).toContain('/oauth/token');
+    expect(meta.code_challenge_methods_supported).toContain('S256');
+
+    const resourceRes = await fetch(`${baseUrl}/.well-known/oauth-protected-resource`);
+    expect(resourceRes.status).toBe(200);
+    const resource = (await resourceRes.json()) as any;
+    expect(resource.bearer_methods_supported).toContain('header');
+  });
+
+  it('executes full OAuth 2.1 PKCE authorization flow', async () => {
+    // 1. Dynamic client registration
+    const regRes = await fetch(`${baseUrl}/oauth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: 'Claude Test Client',
+        redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+      }),
+    });
+    expect(regRes.status).toBe(201);
+    const reg = (await regRes.json()) as any;
+    expect(reg.client_id).toBeTruthy();
+
+    // 2. PKCE setup
+    const crypto = await import('node:crypto');
+    const codeVerifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const codeChallenge = crypto
+      .createHash('sha256')
+      .update(codeVerifier)
+      .digest('base64url');
+
+    // 3. Authorize request with auto=true
+    const authUrl = `${baseUrl}/oauth/authorize?client_id=${reg.client_id}&redirect_uri=https://claude.ai/api/mcp/auth_callback&response_type=code&code_challenge=${codeChallenge}&code_challenge_method=S256&state=xyz123&auto=true`;
+    const authRes = await fetch(authUrl, { redirect: 'manual' });
+    expect(authRes.status).toBe(302);
+    const location = authRes.headers.get('location')!;
+    expect(location).toContain('https://claude.ai/api/mcp/auth_callback');
+    const redirectUrl = new URL(location);
+    const code = redirectUrl.searchParams.get('code');
+    expect(code).toBeTruthy();
+    expect(redirectUrl.searchParams.get('state')).toBe('xyz123');
+
+    // 4. Exchange code for access token at /oauth/token
+    const tokenRes = await fetch(`${baseUrl}/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: code!,
+        redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        client_id: reg.client_id,
+        code_verifier: codeVerifier,
+      }),
+    });
+    expect(tokenRes.status).toBe(200);
+    const tokenData = (await tokenRes.json()) as any;
+    expect(tokenData.access_token).toBe(testAuthToken);
+    expect(tokenData.token_type).toBe('Bearer');
+
+    // 5. Use returned access token to query /mcp
+    const mcpRes = await fetch(`${baseUrl}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tokenData.access_token}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 10,
+        method: 'tools/list',
+        params: {},
+      }),
+    });
+    expect(mcpRes.status).toBe(200);
+    const mcpBody = await mcpRes.text();
+    expect(mcpBody).toContain('search_notes');
+  });
 });
