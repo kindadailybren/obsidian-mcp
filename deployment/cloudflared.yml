@@ -1,0 +1,19 @@
+# Cloudflare Tunnel configuration for Obsidian MCP
+# 1. Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+# 2. Login: cloudflared tunnel login
+# 3. Create tunnel: cloudflared tunnel create obsidian-mcp
+# 4. Route DNS: cloudflared tunnel route dns obsidian-mcp notes.yourdomain.com
+
+tunnel: <YOUR-TUNNEL-UUID>
+credentials-file: /home/bren/.cloudflared/<YOUR-TUNNEL-UUID>.json
+
+ingress:
+  # Route traffic for your custom subdomain to local MCP server
+  - hostname: notes.yourdomain.com
+    service: http://localhost:3000
+    originRequest:
+      connectTimeout: 30s
+      noTLSVerify: false
+
+  # Fallback 404 rule required by Cloudflare
+  - service: http_status:404

@@ -1,0 +1,17 @@
+[Unit]
+Description=Obsidian Model Context Protocol (MCP) Server Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=bren
+WorkingDirectory=/storage2/coding/mcp-obsidian
+EnvironmentFile=/storage2/coding/mcp-obsidian/.env
+ExecStart=/usr/bin/node /storage2/coding/mcp-obsidian/dist/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
