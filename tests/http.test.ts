@@ -78,6 +78,11 @@ describe('HTTP & Authentication Transport', () => {
     expect(res.status).toBe(401);
   });
 
+  it('rejects tokens passed in query parameters for security', async () => {
+    const res = await fetch(`${baseUrl}/api/notes?token=${testAuthToken}`);
+    expect(res.status).toBe(401);
+  });
+
   it('authorizes requests with Bearer token', async () => {
     const res = await fetch(`${baseUrl}/api/notes`, {
       headers: { Authorization: `Bearer ${testAuthToken}` },

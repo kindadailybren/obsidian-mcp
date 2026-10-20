@@ -24,21 +24,18 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
 
     const authHeader = req.headers.authorization;
     const apiKeyHeader = req.headers['x-api-key'];
-    const queryToken = req.query.token as string | undefined;
 
     let providedToken: string | undefined;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       providedToken = authHeader.slice(7).trim();
     } else if (apiKeyHeader) {
       providedToken = String(apiKeyHeader).trim();
-    } else if (queryToken) {
-      providedToken = queryToken.trim();
     }
 
     if (!providedToken || providedToken !== config.authToken) {
       res.status(401).json({
         error: 'Unauthorized',
-        message: 'Valid Bearer token or x-api-key header is required.',
+        message: 'Valid Bearer token or x-api-key header is required in request headers.',
       });
       return;
     }
