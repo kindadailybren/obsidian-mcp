@@ -104,4 +104,14 @@ describe('HTTP & Authentication Transport', () => {
     expect(data.count).toBe(1);
     expect(data.results[0].path).toBe('Hello.md');
   });
+
+  it('reads a specific note via /api/note endpoint', async () => {
+    const res = await fetch(`${baseUrl}/api/note?name=Hello`, {
+      headers: { Authorization: `Bearer ${testAuthToken}` },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as any;
+    expect(data.title).toBe('Hello');
+    expect(data.content).toContain('Welcome to Obsidian MCP');
+  });
 });

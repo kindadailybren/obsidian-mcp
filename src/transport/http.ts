@@ -95,6 +95,34 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
     });
   });
 
+  // Read a specific note directly by path or title
+  app.get('/api/note', async (req: Request, res: Response) => {
+    const notePath = (req.query.path || req.query.name) as string | undefined;
+    if (!notePath) {
+      res.status(400).json({ error: 'Missing query parameter "path" or "name"' });
+      return;
+    }
+
+    try {
+      const note = await deps.fileManager.readNote(notePath);
+      if (req.query.raw === 'true') {
+        res.type('text/markdown; charset=utf-8').send(note.rawContent);
+        return;
+      }
+      res.json({
+        path: note.path,
+        title: note.title,
+        tags: note.tags,
+        frontmatter: note.frontmatter,
+        modifiedAt: note.mtime.toISOString(),
+        sizeBytes: note.size,
+        content: note.content,
+      });
+    } catch (err: any) {
+      res.status(404).json({ error: err.message });
+    }
+  });
+
   // MCP SSE endpoint
   app.get('/sse', async (req: Request, res: Response) => {
     const transport = new SSEServerTransport('/messages', res);

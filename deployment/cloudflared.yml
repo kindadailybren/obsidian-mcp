@@ -4,12 +4,12 @@
 # 3. Create tunnel: cloudflared tunnel create obsidian-mcp
 # 4. Route DNS: cloudflared tunnel route dns obsidian-mcp notes.yourdomain.com
 
-tunnel: <YOUR-TUNNEL-UUID>
-credentials-file: /home/bren/.cloudflared/<YOUR-TUNNEL-UUID>.json
+tunnel: 3c06520a-ed4e-4943-9db4-e73c68662b26
+credentials-file: /home/bren/.cloudflared/3c06520a-ed4e-4943-9db4-e73c68662b26.json
 
 ingress:
   # Route traffic for your custom subdomain to local MCP server
-  - hostname: notes.yourdomain.com
+  - hostname: notes.breindel.me
     service: http://localhost:3000
     originRequest:
       connectTimeout: 30s
