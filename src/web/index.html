@@ -521,8 +521,27 @@
           return `<a class="wiki-link" data-wiki-target="${safeTarget}">${displayText}</a>`;
         });
 
+        // Protect LaTeX math formulas from being mangled by marked (e.g. underscores converted to <em>)
+        const mathPlaceholders = [];
+        markdown = markdown.replace(/\$\$([\s\S]+?)\$\$/g, (match) => {
+          const placeholder = `KATEXDISPLAYTOKEN${mathPlaceholders.length}ENDTOKEN`;
+          mathPlaceholders.push({ placeholder, math: match });
+          return placeholder;
+        });
+        markdown = markdown.replace(/\$([^\$\n]+?)\$/g, (match) => {
+          const placeholder = `KATEXINLINETOKEN${mathPlaceholders.length}ENDTOKEN`;
+          mathPlaceholders.push({ placeholder, math: match });
+          return placeholder;
+        });
+
         // Parse markdown with marked.js and sanitize with DOMPurify to prevent XSS
-        const rawHtml = marked.parse(markdown);
+        let rawHtml = marked.parse(markdown);
+
+        // Restore math formulas untouched
+        mathPlaceholders.forEach(({ placeholder, math }) => {
+          rawHtml = rawHtml.replace(placeholder, () => math);
+        });
+
         const cleanHtml = typeof DOMPurify !== 'undefined'
           ? DOMPurify.sanitize(rawHtml, { ADD_ATTR: ['data-wiki-target'] })
           : rawHtml;
