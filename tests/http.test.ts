@@ -15,6 +15,7 @@ describe('HTTP & Authentication Transport', () => {
   let server: Server;
   let baseUrl: string;
   const testAuthToken = 'secret-test-token-123';
+  const testReadOnlyToken = 'readonly-share-token-456';
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'obsidian-http-test-'));
@@ -23,7 +24,8 @@ describe('HTTP & Authentication Transport', () => {
     const vaultGraph = new VaultGraph(fileManager);
     const dailyNotes = new DailyNotesManager(fileManager);
 
-    await fileManager.createNote('Hello.md', '# Hello World\nWelcome to Obsidian MCP.');
+    await fileManager.createNote('Hello.md', '# Hello World\nWelcome to Obsidian MCP.', {}, ['shared']);
+    await fileManager.createNote('Private/Secret.md', '# Secret\nConfidential note.', {}, ['private']);
     await searchIndex.initialize(false);
 
     const config: Config = {
@@ -31,6 +33,8 @@ describe('HTTP & Authentication Transport', () => {
       port: 0, // dynamic port
       host: '127.0.0.1',
       authToken: testAuthToken,
+      readOnlyToken: testReadOnlyToken,
+      readOnlyTags: ['shared'],
       dailyNotesFolder: 'Daily Notes',
       dailyNotesFormat: 'YYYY-MM-DD',
       trashFolder: '.trash',
@@ -58,12 +62,14 @@ describe('HTTP & Authentication Transport', () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it('allows access to unauthenticated /health endpoint', async () => {
+  it('allows access to unauthenticated /health endpoint without leaking vaultPath', async () => {
     const res = await fetch(`${baseUrl}/health`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as any;
     expect(data.status).toBe('healthy');
     expect(data.authEnabled).toBe(true);
+    expect(data.readOnlyEnabled).toBe(true);
+    expect(data.vaultPath).toBeUndefined();
   });
 
   it('serves the Web Reader UI at root endpoint', async () => {
@@ -90,14 +96,37 @@ describe('HTTP & Authentication Transport', () => {
     expect(res.status).toBe(401);
   });
 
-  it('authorizes requests with Bearer token', async () => {
+  it('authorizes admin requests with Bearer token and sees all notes', async () => {
     const res = await fetch(`${baseUrl}/api/notes`, {
       headers: { Authorization: `Bearer ${testAuthToken}` },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as any;
+    expect(data.role).toBe('admin');
+    expect(data.count).toBe(2);
+  });
+
+  it('authorizes read-only requests and filters notes according to readOnlyTags/readOnlyFolders', async () => {
+    const res = await fetch(`${baseUrl}/api/notes`, {
+      headers: { Authorization: `Bearer ${testReadOnlyToken}` },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as any;
+    expect(data.role).toBe('readonly');
     expect(data.count).toBe(1);
     expect(data.notes[0].path).toBe('Hello.md');
+
+    // Reading allowed note succeeds
+    const allowedRes = await fetch(`${baseUrl}/api/note?path=Hello.md`, {
+      headers: { Authorization: `Bearer ${testReadOnlyToken}` },
+    });
+    expect(allowedRes.status).toBe(200);
+
+    // Reading out-of-scope note returns 403
+    const forbiddenRes = await fetch(`${baseUrl}/api/note?path=Private/Secret.md`, {
+      headers: { Authorization: `Bearer ${testReadOnlyToken}` },
+    });
+    expect(forbiddenRes.status).toBe(403);
   });
 
   it('authorizes requests with x-api-key header', async () => {
@@ -145,7 +174,7 @@ describe('HTTP & Authentication Transport', () => {
     expect(res.status).toBe(401);
   });
 
-  it('handles modern Streamable HTTP /mcp initialize and tools/list', async () => {
+  it('handles modern Streamable HTTP /mcp initialize and tools/list for admin vs read-only', async () => {
     const initRes = await fetch(`${baseUrl}/mcp`, {
       method: 'POST',
       headers: {
@@ -186,27 +215,27 @@ describe('HTTP & Authentication Transport', () => {
     expect(toolsRes.status).toBe(200);
     const text = await toolsRes.text();
     expect(text).toContain('search_notes');
-    expect(text).toContain('read_note');
-  });
+    expect(text).toContain('create_note');
 
-  it('supports stateless one-shot calls to /mcp', async () => {
-    const res = await fetch(`${baseUrl}/mcp`, {
+    // Read-only stateless tools/list omits write tools
+    const roToolsRes = await fetch(`${baseUrl}/mcp`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${testAuthToken}`,
+        Authorization: `Bearer ${testReadOnlyToken}`,
       },
       body: JSON.stringify({
         jsonrpc: '2.0',
-        id: 99,
+        id: 3,
         method: 'tools/list',
         params: {},
       }),
     });
-
-    expect(res.status).toBe(200);
-    const body = await res.text();
-    expect(body).toContain('search_notes');
+    expect(roToolsRes.status).toBe(200);
+    const roText = await roToolsRes.text();
+    expect(roText).toContain('search_notes');
+    expect(roText).not.toContain('create_note');
+    expect(roText).not.toContain('patch_note');
   });
 
   it('exposes RFC 8414 and RFC 9728 OAuth discovery metadata', async () => {
@@ -223,7 +252,7 @@ describe('HTTP & Authentication Transport', () => {
     expect(resource.bearer_methods_supported).toContain('header');
   });
 
-  it('executes full OAuth 2.1 PKCE authorization flow', async () => {
+  it('requires valid token on OAuth consent POST and blocks unauthenticated auto=true', async () => {
     // 1. Dynamic client registration
     const regRes = await fetch(`${baseUrl}/oauth/register`, {
       method: 'POST',
@@ -235,9 +264,7 @@ describe('HTTP & Authentication Transport', () => {
     });
     expect(regRes.status).toBe(201);
     const reg = (await regRes.json()) as any;
-    expect(reg.client_id).toBeTruthy();
 
-    // 2. PKCE setup
     const crypto = await import('node:crypto');
     const codeVerifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
     const codeChallenge = crypto
@@ -245,18 +272,52 @@ describe('HTTP & Authentication Transport', () => {
       .update(codeVerifier)
       .digest('base64url');
 
-    // 3. Authorize request with auto=true
-    const authUrl = `${baseUrl}/oauth/authorize?client_id=${reg.client_id}&redirect_uri=https://claude.ai/api/mcp/auth_callback&response_type=code&code_challenge=${codeChallenge}&code_challenge_method=S256&state=xyz123&auto=true`;
-    const authRes = await fetch(authUrl, { redirect: 'manual' });
-    expect(authRes.status).toBe(302);
-    const location = authRes.headers.get('location')!;
-    expect(location).toContain('https://claude.ai/api/mcp/auth_callback');
+    // 2. Unauthenticated GET with ?auto=true must NOT redirect with a code; it renders HTML consent page
+    const autoUrl = `${baseUrl}/oauth/authorize?client_id=${reg.client_id}&redirect_uri=https://claude.ai/api/mcp/auth_callback&response_type=code&code_challenge=${codeChallenge}&code_challenge_method=S256&state=xyz123&auto=true`;
+    const autoRes = await fetch(autoUrl, { redirect: 'manual' });
+    expect(autoRes.status).toBe(200);
+
+    // 3. POST /oauth/authorize with wrong token returns 401
+    const badPostRes = await fetch(`${baseUrl}/oauth/authorize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        action: 'approve',
+        client_id: reg.client_id,
+        redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        response_type: 'code',
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256',
+        state: 'xyz123',
+        auth_token: 'wrong-token',
+      }),
+      redirect: 'manual',
+    });
+    expect(badPostRes.status).toBe(401);
+
+    // 4. POST /oauth/authorize with valid read-only token issues code and exchanges for read-only token
+    const goodPostRes = await fetch(`${baseUrl}/oauth/authorize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        action: 'approve',
+        client_id: reg.client_id,
+        redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        response_type: 'code',
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256',
+        state: 'xyz123',
+        auth_token: testReadOnlyToken,
+      }),
+      redirect: 'manual',
+    });
+    expect(goodPostRes.status).toBe(302);
+    const location = goodPostRes.headers.get('location')!;
     const redirectUrl = new URL(location);
     const code = redirectUrl.searchParams.get('code');
     expect(code).toBeTruthy();
-    expect(redirectUrl.searchParams.get('state')).toBe('xyz123');
 
-    // 4. Exchange code for access token at /oauth/token
+    // 5. Exchange code for access token at /oauth/token
     const tokenRes = await fetch(`${baseUrl}/oauth/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -270,25 +331,30 @@ describe('HTTP & Authentication Transport', () => {
     });
     expect(tokenRes.status).toBe(200);
     const tokenData = (await tokenRes.json()) as any;
-    expect(tokenData.access_token).toBe(testAuthToken);
-    expect(tokenData.token_type).toBe('Bearer');
+    expect(tokenData.access_token).toBe(testReadOnlyToken);
+    expect(tokenData.role).toBe('readonly');
+    expect(tokenData.scope).toBe('notes:read');
 
-    // 5. Use returned access token to query /mcp
-    const mcpRes = await fetch(`${baseUrl}/mcp`, {
+    // 6. Invalid refresh_token is rejected
+    const badRefreshRes = await fetch(`${baseUrl}/oauth/token`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${tokenData.access_token}`,
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 10,
-        method: 'tools/list',
-        params: {},
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: 'forged-refresh-token',
       }),
     });
-    expect(mcpRes.status).toBe(200);
-    const mcpBody = await mcpRes.text();
-    expect(mcpBody).toContain('search_notes');
+    expect(badRefreshRes.status).toBe(400);
+
+    // 7. Valid refresh_token succeeds
+    const goodRefreshRes = await fetch(`${baseUrl}/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: tokenData.refresh_token,
+      }),
+    });
+    expect(goodRefreshRes.status).toBe(200);
   });
 });

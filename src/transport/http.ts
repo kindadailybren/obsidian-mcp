@@ -7,13 +7,17 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { Config } from '../config.js';
-import { createObsidianMcpServer, ServerDependencies } from '../server.js';
-import { registerOAuthRoutes } from '../auth/oauth.js';
+import { createObsidianMcpServer, ServerDependencies, McpServerOptions } from '../server.js';
+import { registerOAuthRoutes, resolveTokenRole, AccessRole } from '../auth/oauth.js';
+import { ReadScopePolicy } from '../vault/fileManager.js';
 
 export function createHttpServer(config: Config, deps: ServerDependencies) {
   const app = express();
-  const sseTransports = new Map<string, SSEServerTransport>();
-  const streamableTransports = new Map<string, StreamableHTTPServerTransport>();
+  const sseTransports = new Map<string, { transport: SSEServerTransport; role: AccessRole }>();
+  const streamableTransports = new Map<
+    string,
+    { transport: StreamableHTTPServerTransport; role: AccessRole }
+  >();
 
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
@@ -25,6 +29,26 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
     const candidate2 = path.resolve(process.cwd(), 'src/web/index.html');
     if (fs.existsSync(candidate1)) return candidate1;
     return candidate2;
+  };
+
+  const getReadOnlyScope = (): ReadScopePolicy | undefined => {
+    if (config.readOnlyFolders || config.readOnlyTags) {
+      return {
+        allowedFolders: config.readOnlyFolders,
+        allowedTags: config.readOnlyTags,
+      };
+    }
+    return undefined;
+  };
+
+  const getMcpOptionsForRole = (role: AccessRole): McpServerOptions => {
+    if (role === 'readonly') {
+      return {
+        readOnly: true,
+        scope: getReadOnlyScope(),
+      };
+    }
+    return { readOnly: false };
   };
 
   // Register RFC 8414 / RFC 9728 OAuth 2.1 routes (Claude & Gemini auth)
@@ -44,8 +68,10 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
       return next();
     }
 
-    if (!config.authToken) {
-      return next(); // Auth disabled if no token set
+    const authRequired = Boolean(config.authToken || config.readOnlyToken);
+    if (!authRequired) {
+      res.locals.authRole = 'admin' as AccessRole;
+      return next(); // Auth disabled if no tokens set
     }
 
     const authHeader = req.headers.authorization;
@@ -58,7 +84,8 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
       providedToken = String(apiKeyHeader).trim();
     }
 
-    if (!providedToken || providedToken !== config.authToken) {
+    const resolved = resolveTokenRole(providedToken, config);
+    if (!resolved) {
       const host = req.get('x-forwarded-host') || req.get('host') || 'notes.breindel.me';
       const proto = req.get('x-forwarded-proto') || (req.secure ? 'https' : 'http');
       const baseUrl = host.includes('notes.breindel.me') ? 'https://notes.breindel.me' : `${proto}://${host}`;
@@ -73,21 +100,23 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
       return;
     }
 
+    res.locals.authRole = resolved.role;
+    res.locals.readScope = resolved.role === 'readonly' ? getReadOnlyScope() : undefined;
     next();
   };
 
   app.use(authMiddleware);
 
-  // Health check endpoint
+  // Health check endpoint (scrubbed of host filesystem paths)
   app.get('/health', async (_req: Request, res: Response) => {
     const notes = await deps.fileManager.listNotes({ limit: 1 });
     res.json({
       status: 'healthy',
       server: 'mcp-obsidian',
       version: '1.0.0',
-      vaultPath: deps.fileManager.getVaultPath(),
       hasNotes: notes.length > 0,
-      authEnabled: Boolean(config.authToken),
+      authEnabled: Boolean(config.authToken || config.readOnlyToken),
+      readOnlyEnabled: Boolean(config.readOnlyToken),
       endpoints: {
         mcp: '/mcp',
         sse: '/sse',
@@ -107,6 +136,16 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
     }
   });
 
+  // Inspect active token role & permissions
+  app.get('/api/auth/me', (_req: Request, res: Response) => {
+    const role: AccessRole = res.locals.authRole || 'admin';
+    res.json({
+      role,
+      readOnly: role === 'readonly',
+      scope: res.locals.readScope || null,
+    });
+  });
+
   // REST API helpers (for direct browser/webhook usage)
   app.get('/api/search', async (req: Request, res: Response) => {
     const q = req.query.q as string;
@@ -118,8 +157,9 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
     const tag = req.query.tag as string | undefined;
     const limit = req.query.limit ? Number(req.query.limit) : 10;
     const tags = tag ? [tag] : undefined;
+    const scope = res.locals.readScope as ReadScopePolicy | undefined;
 
-    const results = await deps.searchIndex.search(q, { folder, tags, limit });
+    const results = await deps.searchIndex.search(q, { folder, tags, limit, scope });
     res.json({ count: results.length, results });
   });
 
@@ -127,18 +167,24 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
     const folder = req.query.folder as string | undefined;
     const tag = req.query.tag as string | undefined;
     const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const scope = res.locals.readScope as ReadScopePolicy | undefined;
 
-    const notes = await deps.fileManager.listNotes({ folder, tag, limit });
-    res.json({
-      count: notes.length,
-      notes: notes.map((n) => ({
-        path: n.path,
-        title: n.title,
-        tags: n.tags,
-        mtime: n.mtime,
-        size: n.size,
-      })),
-    });
+    try {
+      const notes = await deps.fileManager.listNotes({ folder, tag, limit, scope });
+      res.json({
+        count: notes.length,
+        role: res.locals.authRole || 'admin',
+        notes: notes.map((n) => ({
+          path: n.path,
+          title: n.title,
+          tags: n.tags,
+          mtime: n.mtime,
+          size: n.size,
+        })),
+      });
+    } catch (err: any) {
+      res.status(403).json({ error: err.message });
+    }
   });
 
   // Read a specific note directly by path or title
@@ -149,8 +195,10 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
       return;
     }
 
+    const scope = res.locals.readScope as ReadScopePolicy | undefined;
+
     try {
-      const note = await deps.fileManager.readNote(notePath);
+      const note = await deps.fileManager.readNote(notePath, scope);
       if (req.query.raw === 'true') {
         res.type('text/markdown; charset=utf-8').send(note.rawContent);
         return;
@@ -165,7 +213,8 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
         content: note.content,
       });
     } catch (err: any) {
-      res.status(404).json({ error: err.message });
+      const status = err.message && err.message.startsWith('Access denied') ? 403 : 404;
+      res.status(status).json({ error: err.message });
     }
   });
 
@@ -186,20 +235,30 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
     }
     req.headers.accept = normalizedAccept;
 
+    const role: AccessRole = res.locals.authRole || 'admin';
     const rawSessionId = req.headers['mcp-session-id'];
     const sessionId = typeof rawSessionId === 'string' ? rawSessionId : undefined;
 
     let transport: StreamableHTTPServerTransport | undefined;
 
     if (sessionId && streamableTransports.has(sessionId)) {
-      // Existing active stateful session
-      transport = streamableTransports.get(sessionId)!;
+      const entry = streamableTransports.get(sessionId)!;
+      // Prevent privilege escalation across tokens sharing a session ID
+      if (entry.role !== role) {
+        res.status(403).json({
+          jsonrpc: '2.0',
+          error: { code: -32001, message: 'Token role does not match active session role' },
+          id: null,
+        });
+        return;
+      }
+      transport = entry.transport;
     } else if (!sessionId && req.method === 'POST' && isInitializeRequest(req.body)) {
       // Initialize a new stateful session
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (newSid) => {
-          streamableTransports.set(newSid, transport!);
+          streamableTransports.set(newSid, { transport: transport!, role });
         },
       });
 
@@ -210,7 +269,7 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
         }
       };
 
-      const mcpServer = createObsidianMcpServer(deps);
+      const mcpServer = createObsidianMcpServer(deps, getMcpOptionsForRole(role));
       await mcpServer.connect(transport);
     } else if (sessionId) {
       // Session ID was passed but does not exist or expired
@@ -225,7 +284,7 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
       const statelessTransport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
       });
-      const mcpServer = createObsidianMcpServer(deps);
+      const mcpServer = createObsidianMcpServer(deps, getMcpOptionsForRole(role));
       await mcpServer.connect(statelessTransport);
       await statelessTransport.handleRequest(req, res, req.body);
       res.on('close', () => {
@@ -259,11 +318,12 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
   // Legacy HTTP+SSE Transport (Backwards compatibility for /sse & /messages)
   // ===========================================================================
   app.get('/sse', async (req: Request, res: Response) => {
+    const role: AccessRole = res.locals.authRole || 'admin';
     const transport = new SSEServerTransport('/messages', res);
     const sessionId = transport.sessionId;
-    sseTransports.set(sessionId, transport);
+    sseTransports.set(sessionId, { transport, role });
 
-    const mcpServer = createObsidianMcpServer(deps);
+    const mcpServer = createObsidianMcpServer(deps, getMcpOptionsForRole(role));
 
     transport.onclose = () => {
       sseTransports.delete(sessionId);
@@ -283,14 +343,20 @@ export function createHttpServer(config: Config, deps: ServerDependencies) {
       return;
     }
 
-    const transport = sseTransports.get(sessionId);
-    if (!transport) {
+    const entry = sseTransports.get(sessionId);
+    if (!entry) {
       res.status(404).send(`Session not found: ${sessionId}`);
       return;
     }
 
+    const role: AccessRole = res.locals.authRole || 'admin';
+    if (entry.role !== role) {
+      res.status(403).send('Token role mismatch for session');
+      return;
+    }
+
     try {
-      await transport.handlePostMessage(req, res, req.body);
+      await entry.transport.handlePostMessage(req, res, req.body);
     } catch (err: any) {
       if (!res.headersSent) {
         res.status(500).send(err.message);

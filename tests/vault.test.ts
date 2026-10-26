@@ -55,6 +55,37 @@ describe('Obsidian Vault Engine', () => {
       await expect(
         fileManager.createNote('../outside.md', 'hacked')
       ).rejects.toThrow(/traverses outside of the vault/);
+
+      // Sibling prefix bypass check (e.g. /tmp/vault-other when vault is /tmp/vault)
+      const siblingDir = `${tempDir}-sibling`;
+      await expect(
+        fileManager.readNote(`../${path.basename(siblingDir)}/secret.md`)
+      ).rejects.toThrow(/traverses outside of the vault/);
+
+      // Hidden/system folder direct access check
+      await expect(
+        fileManager.readNote('.obsidian/workspace.json')
+      ).rejects.toThrow(/cannot directly access hidden\/system path/);
+    });
+
+    it('enforces read-only scope policies (allowedFolders and allowedTags)', async () => {
+      await fileManager.createNote('Public/Guide.md', 'Public guide', {}, ['shared']);
+      await fileManager.createNote('Private/Secrets.md', 'Top secret', {}, ['private']);
+
+      const folderScope = { allowedFolders: ['Public'] };
+      const allowedNote = await fileManager.readNote('Public/Guide.md', folderScope);
+      expect(allowedNote.title).toBe('Guide');
+
+      await expect(
+        fileManager.readNote('Private/Secrets.md', folderScope)
+      ).rejects.toThrow(/outside your allowed scope/);
+
+      const scopedList = await fileManager.listNotes({ scope: folderScope });
+      expect(scopedList.map((n) => n.path)).toEqual(['Public/Guide.md']);
+
+      const tagScope = { allowedTags: ['shared'] };
+      const tagScopedList = await fileManager.listNotes({ scope: tagScope });
+      expect(tagScopedList.map((n) => n.path)).toEqual(['Public/Guide.md']);
     });
 
     it('appends content under a heading and creates a backup', async () => {

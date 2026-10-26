@@ -39,7 +39,8 @@ async function main() {
     console.log('       Obsidian Model Context Protocol (MCP) Server     ');
     console.log('========================================================');
     console.log(`📂 Vault Path:    ${config.vaultPath}`);
-    console.log(`🔒 Auth Token:    ${config.authToken ? 'Active (Protected)' : 'Disabled (Open)'}`);
+    console.log(`🔒 Admin Token:   ${config.authToken ? 'Active (Protected)' : 'Disabled (Open)'}`);
+    console.log(`👁️  Read-Only:     ${config.readOnlyToken ? 'Active' : 'Not configured'}`);
     console.log(`📅 Daily Notes:   ${config.dailyNotesFolder}`);
     console.log(`🗑️  Trash Backup:  ${config.trashFolder}`);
     console.log('--------------------------------------------------------');

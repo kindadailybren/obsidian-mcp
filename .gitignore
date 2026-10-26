@@ -4,3 +4,4 @@ dist/
 vault/
 *.log
 .DS_Store
+RUNNING.md

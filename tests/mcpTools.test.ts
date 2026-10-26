@@ -148,4 +148,70 @@ describe('MCP Protocol Tools End-to-End', () => {
     const appendData = JSON.parse((appendRes.content[0] as any).text);
     expect(appendData.status).toBe('appended');
   });
+
+  it('registers only read-only tools and blocks daily note creation when readOnly: true', async () => {
+    const vaultGraph = new VaultGraph(fileManager);
+    const dailyNotes = new DailyNotesManager(fileManager);
+
+    await fileManager.createNote('Public/Shared.md', '# Shared Note\nVisible to read-only.', {}, ['public']);
+    await fileManager.createNote('Private/Hidden.md', '# Hidden Note\nSecret.', {}, ['secret']);
+    await searchIndex.initialize(false);
+
+    const roServer = createObsidianMcpServer(
+      {
+        fileManager,
+        searchIndex,
+        vaultGraph,
+        dailyNotesManager: dailyNotes,
+      },
+      {
+        readOnly: true,
+        scope: { allowedFolders: ['Public', 'Daily Notes'] },
+      }
+    );
+
+    const [roClientTransport, roServerTransport] = InMemoryTransport.createLinkedPair();
+    const roClient = new Client({ name: 'ro-test-agent', version: '1.0.0' }, { capabilities: {} });
+
+    await roServer.connect(roServerTransport);
+    await roClient.connect(roClientTransport);
+
+    const toolsRes = await roClient.listTools();
+    const roToolNames = toolsRes.tools.map((t) => t.name);
+
+    expect(roToolNames).toEqual([
+      'search_notes',
+      'read_note',
+      'list_notes',
+      'get_daily_note',
+      'get_backlinks',
+    ]);
+    expect(roToolNames).not.toContain('create_note');
+    expect(roToolNames).not.toContain('append_to_note');
+    expect(roToolNames).not.toContain('patch_note');
+
+    // Allowed note can be read
+    const allowedRead = await roClient.callTool({
+      name: 'read_note',
+      arguments: { path: 'Public/Shared.md' },
+    });
+    expect(allowedRead.isError).toBeFalsy();
+
+    // Restricted note is blocked
+    const blockedRead = await roClient.callTool({
+      name: 'read_note',
+      arguments: { path: 'Private/Hidden.md' },
+    });
+    expect(blockedRead.isError).toBe(true);
+    expect((blockedRead.content[0] as any).text).toContain('outside your allowed scope');
+
+    // get_daily_note in read-only mode does not create a missing daily note
+    const missingDaily = await roClient.callTool({
+      name: 'get_daily_note',
+      arguments: { date: '2099-01-01', createIfMissing: true },
+    });
+    expect(missingDaily.isError).toBe(true);
+
+    await roClient.close();
+  });
 });

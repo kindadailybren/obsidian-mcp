@@ -4,10 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Obsidian Vault Reader</title>
-  <!-- Marked for Markdown, Highlight.js for code, KaTeX for math -->
+  <!-- Marked for Markdown, DOMPurify for XSS sanitization, Highlight.js for code, KaTeX for math -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
@@ -331,7 +332,10 @@
       <div class="sidebar-title">
         <span>📖</span> Obsidian Vault
       </div>
-      <button class="btn-token" onclick="showAuthModal()">Token</button>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span id="roleBadge" style="display:none;font-size:0.7rem;padding:2px 6px;border-radius:4px;font-weight:600;"></span>
+        <button class="btn-token" onclick="showAuthModal()">Token</button>
+      </div>
     </div>
     <div class="search-box">
       <input type="text" id="searchInput" class="search-input" placeholder="Search notes..." autocomplete="off">
@@ -364,8 +368,8 @@
   <div id="authModal" style="display: none;">
     <div class="modal-box">
       <h2>🔒 Vault Authentication</h2>
-      <p>Enter your Bearer / API token to view notes. It will be stored securely in your browser's local storage.</p>
-      <input type="password" id="tokenInput" placeholder="Paste your AUTH_TOKEN here...">
+      <p>Enter your Admin or Read-Only token to view notes. It will be stored in your browser's local storage.</p>
+      <input type="password" id="tokenInput" placeholder="Paste your token here...">
       <button onclick="saveToken()">Connect Vault</button>
     </div>
   </div>
@@ -421,6 +425,20 @@
         renderNoteList(allNotes);
         document.getElementById('noteCount').textContent = `${allNotes.length} notes`;
 
+        const badge = document.getElementById('roleBadge');
+        if (badge) {
+          badge.style.display = 'inline-block';
+          if (data.role === 'readonly') {
+            badge.textContent = 'Read-Only';
+            badge.style.background = '#1e3a5f';
+            badge.style.color = '#93c5fd';
+          } else {
+            badge.textContent = 'Admin';
+            badge.style.background = '#2e2646';
+            badge.style.color = '#c4b5fd';
+          }
+        }
+
         // Automatically open first note or previously selected
         if (allNotes.length > 0 && !currentNote) {
           openNote(allNotes[0].path);
@@ -454,7 +472,7 @@
 
         const title = document.createElement('div');
         title.className = 'folder-title';
-        title.innerHTML = `📁 ${folder}`;
+        title.textContent = `📁 ${folder}`;
         groupDiv.appendChild(title);
 
         groups[folder].forEach(note => {
@@ -495,17 +513,29 @@
         dateSpan.textContent = `Updated: ${new Date(note.modifiedAt).toLocaleDateString()}`;
         metaContainer.appendChild(dateSpan);
 
-        // Convert Obsidian wiki-links [[Target]] into clickable HTML links
+        // Convert Obsidian wiki-links [[Target]] into clickable HTML links safely using data attributes
         let markdown = note.content || '';
         markdown = markdown.replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (match, target, alias) => {
-          const displayText = alias || target;
-          return `<a class="wiki-link" onclick="openNoteByName('${target.trim()}')">${displayText}</a>`;
+          const displayText = (alias || target).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          const safeTarget = target.trim().replace(/"/g, '&quot;');
+          return `<a class="wiki-link" data-wiki-target="${safeTarget}">${displayText}</a>`;
         });
 
-        // Parse markdown with marked.js
-        const html = marked.parse(markdown);
+        // Parse markdown with marked.js and sanitize with DOMPurify to prevent XSS
+        const rawHtml = marked.parse(markdown);
+        const cleanHtml = typeof DOMPurify !== 'undefined'
+          ? DOMPurify.sanitize(rawHtml, { ADD_ATTR: ['data-wiki-target'] })
+          : rawHtml;
         const contentDiv = document.getElementById('content');
-        contentDiv.innerHTML = html;
+        contentDiv.innerHTML = cleanHtml;
+
+        // Bind wiki-link click handlers safely
+        contentDiv.querySelectorAll('.wiki-link[data-wiki-target]').forEach((el) => {
+          el.addEventListener('click', () => {
+            const targetName = el.getAttribute('data-wiki-target');
+            if (targetName) openNoteByName(targetName);
+          });
+        });
 
         // Render code highlighting
         contentDiv.querySelectorAll('pre code').forEach((el) => {
