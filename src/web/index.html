@@ -33,7 +33,14 @@
       color: var(--text-main);
       display: flex;
       height: 100vh;
+      height: 100dvh;
       overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Mobile Overlay */
+    .sidebar-overlay {
+      display: none;
     }
 
     /* Sidebar */
@@ -140,6 +147,47 @@
     }
     .btn-token:hover { background: var(--bg-hover); color: #fff; }
 
+    .mobile-only {
+      display: none !important;
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 6px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      font-size: 0.9rem;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+      touch-action: manipulation;
+    }
+    .btn-icon:hover {
+      background: var(--bg-hover);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .btn-browse {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 14px;
+      transition: background 0.15s ease;
+    }
+    .btn-browse:hover {
+      background: var(--accent-hover);
+    }
+
     /* Main Content */
     #main {
       flex: 1;
@@ -147,6 +195,7 @@
       flex-direction: column;
       height: 100%;
       overflow: hidden;
+      min-width: 0;
     }
 
     .top-bar {
@@ -156,12 +205,27 @@
       justify-content: space-between;
       align-items: center;
       background: var(--bg-primary);
+      gap: 12px;
+    }
+
+    .top-bar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .note-header-info {
+      min-width: 0;
+      flex: 1;
     }
 
     .note-header-info h1 {
       font-size: 1.4rem;
       color: #fff;
       margin-bottom: 4px;
+      word-break: break-word;
     }
 
     .note-meta {
@@ -189,6 +253,21 @@
       margin: 0 auto;
       width: 100%;
       line-height: 1.7;
+      word-break: break-word;
+      overflow-wrap: break-word;
+    }
+
+    .content-container img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 6px;
+    }
+
+    .katex-display {
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 4px 0;
+      -webkit-overflow-scrolling: touch;
     }
 
     /* Markdown Styling */
@@ -226,6 +305,9 @@
       border-collapse: collapse;
       margin-bottom: 20px;
       font-size: 0.9rem;
+      display: block;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }
     .content-container th, .content-container td {
       border: 1px solid var(--border);
@@ -269,6 +351,7 @@
       align-items: center;
       justify-content: center;
       z-index: 1000;
+      padding: 16px;
     }
     .modal-box {
       background: var(--card-bg);
@@ -276,6 +359,7 @@
       padding: 32px;
       border-radius: 12px;
       width: 440px;
+      max-width: 100%;
       box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);
     }
     .modal-box h2 {
@@ -322,9 +406,93 @@
       color: var(--text-muted);
       text-align: center;
     }
+
+    /* Mobile Screen Adjustments */
+    @media (max-width: 768px) {
+      .mobile-only {
+        display: inline-flex !important;
+      }
+
+      .sidebar-overlay {
+        display: block;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.65);
+        backdrop-filter: blur(3px);
+        -webkit-backdrop-filter: blur(3px);
+        z-index: 99;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+      }
+      .sidebar-overlay.visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      #sidebar {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 300px;
+        max-width: 85vw;
+        min-width: 0;
+        height: 100%;
+        height: 100dvh;
+        z-index: 100;
+        transform: translateX(-100%);
+        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.6);
+      }
+      #sidebar.open {
+        transform: translateX(0);
+      }
+
+      #main {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .top-bar {
+        padding: 10px 14px;
+      }
+
+      .note-header-info h1 {
+        font-size: 1.15rem;
+        line-height: 1.3;
+      }
+
+      .note-meta {
+        font-size: 0.75rem;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .content-container {
+        padding: 20px 16px 40px 16px;
+      }
+      .content-container h1 { font-size: 1.5rem; }
+      .content-container h2 { font-size: 1.25rem; }
+      .content-container h3 { font-size: 1.05rem; }
+      .content-container ul, .content-container ol { margin-left: 20px; }
+      .content-container pre { padding: 10px 12px; font-size: 0.85rem; }
+
+      .modal-box {
+        width: 100%;
+        max-width: 400px;
+        padding: 24px 18px;
+      }
+    }
   </style>
 </head>
 <body>
+
+  <!-- Mobile Sidebar Overlay -->
+  <div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleSidebar(false)"></div>
 
   <!-- Sidebar -->
   <aside id="sidebar">
@@ -335,6 +503,7 @@
       <div style="display:flex;align-items:center;gap:6px;">
         <span id="roleBadge" style="display:none;font-size:0.7rem;padding:2px 6px;border-radius:4px;font-weight:600;"></span>
         <button class="btn-token" onclick="showAuthModal()">Token</button>
+        <button id="sidebarCloseBtn" class="btn-icon mobile-only" onclick="toggleSidebar(false)" aria-label="Close sidebar" title="Close sidebar">✕</button>
       </div>
     </div>
     <div class="search-box">
@@ -352,14 +521,24 @@
   <!-- Main View -->
   <main id="main">
     <div class="top-bar">
-      <div class="note-header-info">
-        <h1 id="currentNoteTitle">Select a note</h1>
-        <div id="currentNoteMeta" class="note-meta"></div>
+      <div class="top-bar-left">
+        <button id="menuToggleBtn" class="btn-icon mobile-only" onclick="toggleSidebar(true)" aria-label="Open sidebar" title="Open notes list">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
+        <div class="note-header-info">
+          <h1 id="currentNoteTitle">Select a note</h1>
+          <div id="currentNoteMeta" class="note-meta"></div>
+        </div>
       </div>
     </div>
     <div id="content" class="content-container">
       <div class="empty-state">
         <p>Select a note from the sidebar or search above.</p>
+        <button class="btn-browse mobile-only" onclick="toggleSidebar(true)">Browse Notes</button>
       </div>
     </div>
   </main>
@@ -377,6 +556,22 @@
   <script>
     let allNotes = [];
     let currentNote = null;
+
+    function toggleSidebar(forceOpen) {
+      const sidebar = document.getElementById('sidebar');
+      const overlay = document.getElementById('sidebarOverlay');
+      if (!sidebar || !overlay) return;
+      const isCurrentlyOpen = sidebar.classList.contains('open');
+      const shouldOpen = forceOpen !== undefined ? forceOpen : !isCurrentlyOpen;
+
+      if (shouldOpen) {
+        sidebar.classList.add('open');
+        overlay.classList.add('visible');
+      } else {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('visible');
+      }
+    }
 
     function getToken() {
       return localStorage.getItem('obsidian_token') || '';
@@ -491,6 +686,9 @@
     }
 
     async function openNote(notePath) {
+      if (window.innerWidth <= 768) {
+        toggleSidebar(false);
+      }
       try {
         const res = await apiFetch(`/api/note?path=${encodeURIComponent(notePath)}`);
         const note = await res.json();
@@ -610,6 +808,25 @@
           console.error(e);
         }
       }, 250);
+    });
+
+    // Close sidebar on escape key
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        toggleSidebar(false);
+        const modal = document.getElementById('authModal');
+        if (modal) modal.style.display = 'none';
+      }
+    });
+
+    // Reset mobile sidebar state if resized to desktop
+    window.addEventListener('resize', () => {
+      if (window.innerWidth > 768) {
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('sidebarOverlay');
+        if (sidebar) sidebar.classList.remove('open');
+        if (overlay) overlay.classList.remove('visible');
+      }
     });
 
     // Start on page load
